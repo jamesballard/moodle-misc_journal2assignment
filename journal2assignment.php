@@ -74,7 +74,7 @@ foreach ($journals as $journal) {
         $assignment = new object();
         $assignment->course = $journal->course;
         $assignment->name = $journal->name;
-        $assignment->intro = format_text($journal->intro,$journal->introformat);
+        $assignment->intro = addslashes(format_text($journal->intro,$journal->introformat));
         $assignment->introformat = FORMAT_HTML;
         $assignment->assignmenttype = 'online';
         $assignment->resubmit = 1;
@@ -150,10 +150,10 @@ foreach ($journals as $journal) {
                     $submission->timecreated   = $entry->modified;
                     $submission->timemodified  = $entry->modified;
                     $submission->numfiles      = 0;
-                    $submission->data1         = $entry->text;
+                    $submission->data1         = addslashes($entry->text);
                     $submission->data2         = $entry->format;
                     $submission->grade         = $entry->rating;
-                    $submission->submissioncomment  = $entry->entrycomment;
+                    $submission->submissioncomment  = addslashes($entry->entrycomment);
                     $submission->format        = FORMAT_MOODLE;
                     $submission->teacher       = $entry->teacher;
                     $submission->timemarked    = $entry->timemarked;
