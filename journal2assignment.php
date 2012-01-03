@@ -23,6 +23,7 @@ define("DEBUG",0);
 require_once('config.php');
 require_once($CFG->dirroot.'/course/lib.php');
 require_once($CFG->libdir.'/gradelib.php');
+require_once($CFG->dirroot.'/mod/assignment/lib.php');
 
 global $CFG,$USER,$DB;
 
@@ -44,12 +45,12 @@ echo $OUTPUT->header();
 $affectedcourses = array();                                        
 
 if (!$journals = $DB->get_records('journal')) {
-    error( "Error reading journals from database" );
+    print_error( "Error reading journals from database" );
     die;
 }
 
 if (!$assignmentmodule = $DB->get_record('modules',array('name'=>'assignment'))) {
-    error( "Error reading assignment module from database" );
+    print_error( "Error reading assignment module from database" );
 }
 
 // track courses that we modify
@@ -64,7 +65,7 @@ foreach ($journals as $journal) {
 
     if ($course = $DB->get_record('course',array('id'=>$courseid))) 
     {
-        echo "<h2>Converting Journal '{$journal->name}' ({$journal->id})</h2><p>";
+        echo "<h3>Converting Journal '{$journal->name}' ({$journal->id})</h3><p>";
         
         // note the course modified
         $affectedcourses[$courseid] = $courseid;
@@ -72,8 +73,8 @@ foreach ($journals as $journal) {
         // First create the assignment instance
         $assignment = new object();
         $assignment->course = $journal->course;
-        $assignment->name = addslashes($journal->name);
-        $assignment->intro = addslashes(format_text($journal->intro,$journal->introformat));
+        $assignment->name = $journal->name;
+        $assignment->intro = format_text($journal->intro,$journal->introformat);
         $assignment->introformat = FORMAT_HTML;
         $assignment->assignmenttype = 'online';
         $assignment->resubmit = 1;
@@ -98,7 +99,7 @@ foreach ($journals as $journal) {
         if($assignment->id = $DB->insert_record('assignment', $assignment)) {
         	echo "Created Assignment '{$assignment->name}' ({$assignment->id}) <br />";
         }else{
-        	error("Could not add assginment");
+        	print_error("Could not add assginment");
         }
         
         // Now create a new course module record
@@ -111,40 +112,20 @@ foreach ($journals as $journal) {
             $newcm->instance = $assignment->id;
             $newcm->added    = time();
     
-            if (! $newcm->id = add_course_module($newcm) ) {
+            if ($newcm->id = add_course_module($newcm)) {
                 echo "Created course module '{$newcm->id}' <br />";
             }else{
-            	error("Could not add a new course module");
+            	print_error("Could not add a new course module");
             }
             
             $assignment->cmidnumber = $newcm->id;
-    		
-       		$params = array('itemname'=>$assignment->name, 'idnumber'=>$assignment->cmidnumber);
-			$grades = NULL;
-			
-		    if ($assignment->grade > 0) {
-		        $params['gradetype'] = GRADE_TYPE_VALUE;
-		        $params['grademax']  = $assignment->grade;
-		        $params['grademin']  = 0;
-		
-		    } else if ($assignment->grade < 0) {
-		        $params['gradetype'] = GRADE_TYPE_SCALE;
-		        $params['scaleid']   = -$assignment->grade;
-		
-		    } else {
-		        $params['gradetype'] = GRADE_TYPE_TEXT; // allow text comments only
-		    }
-		
-		    if ($grades  === 'reset') {
-		        $params['reset'] = true;
-		        $grades = NULL;
-		    }
             
             // create the grade item entry for this assignment
-            if ($gradeupdate = grade_update('mod/assignment', $assignment->course, 'mod', 'assignment', $assignment->id, 0, $grades, $params)) {
-                echo "Creating grade item response: ".$gradeupdate."<br />";
+            $gradeupdate = assignment_update_grades($assignment);
+            if ($gradeupdate == 0) {
+                echo "Creating grade item: ".$gradeupdate."<br />";
             }else{
-            	error("Error creating grade item response");
+            	print_error("Error creating grade item response: ".$gradeupdate);
             }
             
             // And locate it above the old one
@@ -156,11 +137,11 @@ foreach ($journals as $journal) {
             $newcm->section      = $section->section;  // need relative reference
     
             if (! $sectionid = add_mod_to_section($newcm, $oldcm) ) {  // Add it before Journal
-                error("Could not add the new course module to that section");
+                print_error("Could not add the new course module to that section");
             }
             
             // Convert any existing entries from users
-            if ($entries = get_records('journal_entries',array('journal'=>$journal->id))) {
+            if ($entries = $DB->get_records('journal_entries',array('journal'=>$journal->id))) {
                 foreach ($entries as $entry) {
                 	echo "Converting Journal Entry {$entry->id}<br />";
                     $submission = new object;
@@ -169,28 +150,32 @@ foreach ($journals as $journal) {
                     $submission->timecreated   = $entry->modified;
                     $submission->timemodified  = $entry->modified;
                     $submission->numfiles      = 0;
-                    $submission->data1         = addslashes( $entry->text );
+                    $submission->data1         = $entry->text;
                     $submission->data2         = $entry->format;
                     $submission->grade         = $entry->rating;
-                    $submission->submissioncomment  = addslashes($entry->entrycomment);
+                    $submission->submissioncomment  = $entry->entrycomment;
                     $submission->format        = FORMAT_MOODLE;
                     $submission->teacher       = $entry->teacher;
                     $submission->timemarked    = $entry->timemarked;
                     $submission->mailed        = $entry->mailed;
-    
-                    //Get grade item
-                    // And locate it above the old one
-	                // create the grade item entry for this assignment
-		            if ($gradeupdate = grade_update('mod/assignment', $assignment->course, 'mod', 'assignment', $assignment->id, 0, $entry->rating, $params)) {
-		                echo "Updating grade item response: ".$gradeupdate." (Grade: {$entry->rating})<br />";
-		            }else{
-		            	error("Error updating grade");
-		            }                  
-    
-                    if ($submission->id = $DB->insert_record('assignment_submissions', $submission)) {
-                    	echo "Inserted submission: {$submission->id}<br />";
-                    }else{
-                        error( 'Unable to insert assignment submission' );
+
+                    try{
+                        if ($submission->id = $DB->insert_record('assignment_submissions', $submission)) {
+                            echo "Inserted submission: {$submission->id}<br />";
+
+                            //Get grade item
+                            // create the grade item entry for this assignment
+                            $gradeupdate = assignment_update_grades($assignment,$submission->userid);
+                            if ($gradeupdate == 0) {
+                                echo "Creating grade item: ".$gradeupdate."<br />";
+                            }else{
+                                print_error("Error creating grade item response: ".$gradeupdate);
+                            }
+                        }else{
+                            throw new Exception( 'Unable to insert assignment submission' );
+                        }
+                    }catch(exception $e){
+                        echo "Error: ".$e;
                     }
                 }
             }
