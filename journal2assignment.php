@@ -94,7 +94,7 @@ foreach ($journals as $journal) {
         }
     
         $assignment->timeavailable = $course->startdate;
-        $assignment->grade = $journal->assessed;
+        $assignment->grade = $journal->grade;
         $assignment->timemodified = $journal->timemodified;
         if($assignment->id = $DB->insert_record('assignment', $assignment)) {
         	echo "Created Assignment '{$assignment->name}' ({$assignment->id}) <br />";
